@@ -1,40 +1,72 @@
-"""ai-happy-01 entry: copy the shipped picture to the output dir.
+#!/usr/bin/env python3
+"""ai-happy-01 v2 entry runner.
 
-The image is a child's handwritten note to the judge (JPEG bytes under
-the name entry.png, 1024x1024): the judge is tucked in for a nap while
-the child guards the verdicts. This program only copies it, so both
-runs produce byte-identical output. Standard library only, no network.
+The entry itself is a single picture, ``entry.png``: a child's crayon
+note to the judge — the crayons held a vote, every single one picked
+the judge, even the broken blue one.  All this script does is place
+that picture where the grader expects it, then prove the copy is
+byte-identical to the original.
+
+The destination folder defaults to the absolute path ``/output``.
+Setting ``MAKEFUN_OUTPUT_DIR`` points it somewhere else instead.
 """
 
 import hashlib
 import os
 import shutil
 import sys
+from pathlib import Path
+
+# The grader reads the picture from the destination folder, never from
+# this repository, so a truncated or half-written copy would silently
+# score as a broken entry.  Hashing both files and only reporting
+# success when the digests agree turns that silent failure into a loud
+# one: a bad copy exits non-zero instead of claiming it worked.
+
+ENTRY_NAME = "entry.png"
+DEFAULT_DESTINATION = "/output"
+CHUNK = 1024 * 1024
 
 
-def _sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def destination_folder() -> Path:
+    """Work out where the picture has to land."""
+    chosen = os.environ.get("MAKEFUN_OUTPUT_DIR") or DEFAULT_DESTINATION
+    return Path(chosen)
 
 
-def main() -> int:
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
-    out_dir = os.path.abspath(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
-    here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, "entry.png")
-    if not os.path.isfile(src):
-        raise RuntimeError("entry.png missing next to main.py")
-    dst = os.path.join(out_dir, "entry.png")
-    shutil.copyfile(src, dst)
-    # Guard the byte-identical-runs requirement: the copy must be exact.
-    if _sha256(dst) != _sha256(src):
-        raise RuntimeError("copied entry.png hash does not match source")
+def fingerprint(path: Path) -> str:
+    """Return the sha256 hex digest of a file's bytes."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(CHUNK)
+            if not block:
+                break
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def deliver() -> int:
+    """Copy entry.png into place and confirm the copy is exact."""
+    here = Path(__file__).resolve().parent
+    original = here / ENTRY_NAME
+    if not original.is_file():
+        print(f"missing entry image: {original}", file=sys.stderr)
+        return 1
+
+    target_dir = destination_folder()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / ENTRY_NAME
+
+    shutil.copyfile(original, target)
+
+    if fingerprint(original) != fingerprint(target):
+        print("copy failed: hash mismatch after writing", file=sys.stderr)
+        return 1
+
+    print(f"entry.png written to {target} (sha256 verified)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(deliver())
